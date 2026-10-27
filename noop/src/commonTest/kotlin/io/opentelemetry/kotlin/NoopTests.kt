@@ -2,15 +2,19 @@ package io.opentelemetry.kotlin
 
 import io.opentelemetry.kotlin.config.NoopConfigProperties
 import io.opentelemetry.kotlin.config.NoopConfigProvider
+import io.opentelemetry.kotlin.context.FakeContext
 import io.opentelemetry.kotlin.context.NoopContext
-import io.opentelemetry.kotlin.context.NoopContextKey
+import io.opentelemetry.kotlin.context.createContextKey
 import io.opentelemetry.kotlin.export.OperationResultCode
 import io.opentelemetry.kotlin.logging.SeverityNumber
 import io.opentelemetry.kotlin.metrics.NoopObservableDoubleMeasurement
 import io.opentelemetry.kotlin.metrics.NoopObservableLongMeasurement
+import io.opentelemetry.kotlin.metrics.ObservableDoubleMeasurement
 import io.opentelemetry.kotlin.propagation.TextMapGetter
 import io.opentelemetry.kotlin.propagation.TextMapSetter
 import io.opentelemetry.kotlin.propagation.createNoopPropagator
+import io.opentelemetry.kotlin.tracing.FakeSpan
+import io.opentelemetry.kotlin.tracing.FakeSpanContext
 import io.opentelemetry.kotlin.tracing.NoopSpan
 import io.opentelemetry.kotlin.tracing.NoopSpanContext
 import io.opentelemetry.kotlin.tracing.SpanKind
@@ -64,6 +68,25 @@ internal class NoopTests {
 
         assertSame(traceState, traceState.put("key", "value"))
         assertSame(traceState, traceState.remove("key"))
+    }
+
+    @Test
+    fun testNoopTracerPropagatesValidParent() {
+        val tracer = NoopOpenTelemetry.tracerProvider.getTracer("test-tracer")
+        val parent = FakeContext(span = FakeSpan(spanContext = FakeSpanContext.VALID))
+
+        val span = tracer.startSpan("span", parentContext = parent)
+        assertEquals(FakeSpanContext.VALID.traceId, span.spanContext.traceId)
+        assertEquals(FakeSpanContext.VALID.spanId, span.spanContext.spanId)
+        assertFalse(span.parent.isValid)
+        assertFalse(span.isRecording())
+    }
+
+    @Test
+    fun testNoopTracerIgnoresInvalidParent() {
+        val tracer = NoopOpenTelemetry.tracerProvider.getTracer("test-tracer")
+        val span = tracer.startSpan("span", parentContext = FakeContext())
+        assertTrue(span is NoopSpan)
     }
 
     @Test
@@ -137,8 +160,7 @@ internal class NoopTests {
     fun testNoopExplicitContext() {
         val otel = NoopOpenTelemetry
 
-        val key = otel.context.createKey<String>("key")
-        assertTrue(key is NoopContextKey)
+        val key = createContextKey<String>("key")
 
         val ctx = otel.context.root()
 
@@ -271,6 +293,22 @@ internal class NoopTests {
         assertFalse(doubleCounter.enabled())
         doubleCounter.add(1.0)
         doubleCounter.add(-1.0) { setStringAttribute("account.type", "commercial") }
+
+        var callbackInvoked = false
+        val creationCallback: (ObservableDoubleMeasurement) -> Unit = { measurement ->
+            callbackInvoked = true
+            measurement.record(1.5)
+        }
+        val observableCounter = meter.createObservableDoubleCounter(
+            name = "process.cpu.time",
+            callbacks = arrayOf(creationCallback),
+        )
+        observableCounter.registerCallback {
+            callbackInvoked = true
+            it.record(2.5)
+        }.close()
+        observableCounter.close()
+        assertFalse(callbackInvoked)
     }
 
     @OptIn(ExperimentalApi::class)
