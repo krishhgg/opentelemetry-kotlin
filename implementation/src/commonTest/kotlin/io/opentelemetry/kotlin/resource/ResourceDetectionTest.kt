@@ -1,6 +1,7 @@
 package io.opentelemetry.kotlin.resource
 
 import io.opentelemetry.kotlin.error.FakeSdkErrorHandler
+import io.opentelemetry.kotlin.factory.ResourceFactory
 import io.opentelemetry.kotlin.factory.ResourceFactoryImpl
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -95,6 +96,29 @@ internal class ResourceDetectionTest {
         val error = errorHandler.apiMisuses.single()
         assertEquals("ResourceDetector", error.api)
         assertEquals("Multiple resource detectors are named 'host'", error.message)
+    }
+
+    @Test
+    fun testThrowingDetectorNameIsReported() {
+        val detectors = listOf(
+            object : ResourceDetector {
+                override val name: String
+                    get() = error("boom")
+
+                override fun ResourceFactory.detect(): Resource = create {
+                    setStringAttribute("host.name", "my-host")
+                }
+            },
+            FakeResourceDetector(name = "process", attributes = mapOf("process.pid" to "123")),
+        )
+
+        val resource = detectors.detectResource(factory, errorHandler)
+
+        assertEquals(mapOf("host.name" to "my-host", "process.pid" to "123"), resource.attributes)
+        val error = errorHandler.userCodeErrors.single()
+        assertEquals("Resource detector name failed", error.message)
+        assertEquals("boom", error.cause.message)
+        assertEquals(0, errorHandler.apiMisuses.size)
     }
 
     @Test

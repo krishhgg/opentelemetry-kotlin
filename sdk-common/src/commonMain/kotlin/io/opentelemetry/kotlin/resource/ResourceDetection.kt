@@ -3,6 +3,7 @@ package io.opentelemetry.kotlin.resource
 import io.opentelemetry.kotlin.error.SdkError
 import io.opentelemetry.kotlin.error.SdkErrorHandler
 import io.opentelemetry.kotlin.error.SdkErrorSeverity
+import io.opentelemetry.kotlin.error.guardOrDefault
 import io.opentelemetry.kotlin.error.reportError
 import io.opentelemetry.kotlin.factory.ResourceFactory
 
@@ -24,10 +25,13 @@ public fun List<ResourceDetector>.detectResource(
         try {
             detected.merge(with(detector) { factory.detect() })
         } catch (exc: Throwable) {
+            val name = errorHandler.guardOrDefault("unknown", "Resource detector name failed") {
+                detector.name
+            }
             errorHandler.reportError(
                 SdkError.UserCodeError(
                     exc,
-                    "Resource detector '${detector.name}' failed",
+                    "Resource detector '$name' failed",
                     SdkErrorSeverity.ERROR,
                 )
             )
@@ -42,7 +46,12 @@ public fun List<ResourceDetector>.detectResource(
  * runs.
  */
 private fun List<ResourceDetector>.reportDuplicateNames(errorHandler: SdkErrorHandler) {
-    groupBy(ResourceDetector::name)
+    mapNotNull { detector ->
+        errorHandler.guardOrDefault<String?>(null, "Resource detector name failed") {
+            detector.name
+        }
+    }
+        .groupBy { it }
         .filterValues { it.size > 1 }
         .keys
         .forEach { name ->

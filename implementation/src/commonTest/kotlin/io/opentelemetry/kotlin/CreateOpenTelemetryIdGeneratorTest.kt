@@ -1,5 +1,6 @@
 package io.opentelemetry.kotlin
 
+import io.opentelemetry.kotlin.error.FakeSdkErrorHandler
 import io.opentelemetry.kotlin.factory.FakeIdGenerator
 import io.opentelemetry.kotlin.factory.IdGeneratorImpl
 import io.opentelemetry.kotlin.factory.toHexString
@@ -8,6 +9,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 @OptIn(ExperimentalApi::class)
 internal class CreateOpenTelemetryIdGeneratorTest {
@@ -31,5 +33,24 @@ internal class CreateOpenTelemetryIdGeneratorTest {
         val span = api.tracerProvider.getTracer("test").startSpan("span")
         assertEquals(custom.generateTraceIdBytes().toHexString(), span.spanContext.traceId)
         assertEquals(custom.generateSpanIdBytes().toHexString(), span.spanContext.spanId)
+    }
+
+    @Test
+    fun `throwing custom id generator is reported and span creation still works`() {
+        val handler = FakeSdkErrorHandler()
+        val api = createOpenTelemetry {
+            errorHandler(handler)
+            idGenerator { error("boom") }
+            tracerProvider { export { FakeSpanProcessor() } }
+        } as OpenTelemetrySdk
+
+        assertIs<IdGeneratorImpl>(api.idGenerator)
+        val span = api.tracerProvider.getTracer("test").startSpan("span")
+        assertTrue(span.spanContext.isValid)
+
+        val error = handler.userCodeErrors.single()
+        assertEquals("Failed to create IdGenerator, using default", error.message)
+        assertEquals("boom", error.cause.message)
+        assertEquals(0, handler.sdkCodeErrors.size)
     }
 }

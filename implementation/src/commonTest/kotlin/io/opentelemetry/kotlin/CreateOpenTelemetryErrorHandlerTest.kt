@@ -101,6 +101,24 @@ internal class CreateOpenTelemetryErrorHandlerTest {
     }
 
     @Test
+    fun `throwing config lambda is reported and earlier config is kept`() {
+        val handler = FakeSdkErrorHandler()
+        val api = createOpenTelemetry {
+            errorHandler(handler)
+            propagator { w3cTraceContext() }
+            error("boom")
+        }
+
+        assertEquals(listOf("traceparent", "tracestate"), api.propagator.fields().toList())
+        api.tracerProvider.getTracer("test")
+        val error = handler.userCodeErrors.single()
+        assertEquals("OpenTelemetry configuration failed", error.message)
+        assertEquals("boom", error.cause.message)
+        assertEquals(SdkErrorSeverity.WARNING, error.severity)
+        assertEquals(0, handler.sdkCodeErrors.size)
+    }
+
+    @Test
     fun `a handler that throws does not escape the SDK`() = runTest {
         val api = createOpenTelemetry {
             errorHandler { throw IllegalStateException("handler boom") }
